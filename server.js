@@ -76,7 +76,7 @@ function requireRoles(...allowedRoles) {
 }
 
 // ========================================================
-// 1. تسجيل الدخول والمصادقة (Authentication مع تشفير الحماية)
+// 1. تسجيل الدخول والمصادقة (Authentication المرن)
 // ========================================================
 app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body;
@@ -88,12 +88,10 @@ app.post('/api/auth/login', async (req, res) => {
 
     const user = userRes.rows[0];
 
-    // دعم التحقق المشفر والتحقق النصي للبيئات المرنة
-    let isMatch = false;
-    if (user.password.startsWith('$2a$') || user.password.startsWith('$2b$')) {
+    // التحقق المرن: مطابقة مباشرة أو مقارنة التشفير عبر bcrypt
+    let isMatch = (user.password === password);
+    if (!isMatch && (user.password.startsWith('$2a$') || user.password.startsWith('$2b$'))) {
       isMatch = await bcrypt.compare(password, user.password);
-    } else {
-      isMatch = (user.password === password);
     }
 
     if (!isMatch) {
@@ -144,7 +142,7 @@ app.post('/api/companies', authenticateToken, requireRoles('ADMIN', 'REGISTRATIO
 });
 
 // ========================================================
-// 3. إدارة المؤمن عليهم
+// 3. إدارة المؤمن عليهم (Employees)
 // ========================================================
 app.get('/api/employees', async (req, res) => {
   try {
@@ -161,7 +159,6 @@ app.get('/api/employees', async (req, res) => {
   }
 });
 
-// تسجيل موظف جديد
 app.post('/api/employees', upload.single('national_id_photo'), async (req, res) => {
   try {
     const { company_id, national_id, full_name, gender, basic_salary, hire_date } = req.body;
