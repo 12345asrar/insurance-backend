@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>البوابة المركزية - منظومة التأمينات الاجتماعية الشاملة</title>
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #0f766e;
+            --primary-dark: #115e59;
+            --sidebar-bg: #0f172a;
+            --sidebar-hover: #1e293b;
+            --bg: #f8fafc;
+            --card-bg: #ffffff;
+            --text-dark: #1e293b;
+            --text-muted: #64748b;
+            --border: #e2e8f0;
+            --success: #16a34a;
+            --warning: #d97706;
+            --danger: #dc2626;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Cairo', sans-serif; }
+        body { background-color: var(--bg); color: var(--text-dark); height: 100vh; display: flex; overflow: hidden; }
+
+        aside {
+            width: 280px;
+            background-color: var(--sidebar-bg);
+            color: #ffffff;
+            display: flex;
+            flex-direction: column;
+            border-left: 1px solid rgba(255, 255, 255, 0.05);
+            flex-shrink: 0;
+        }
+
+        .sidebar-brand {
+            padding: 24px 20px;
+            background: linear-gradient(135deg, var(--primary-dark), var(--primary));
+        }
+
+        .sidebar-brand h2 { font-size: 16px; font-weight: 800; line-height: 1.4; }
+
+        .nav-list {
+            list-style: none;
+            padding: 20px 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            flex: 1;
+        }
+
+        .nav-item {
+            padding: 12px 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-weight: 600;
+            font-size: 14px;
+            color: #94a3b8;
+            transition: all 0.2s ease;
+        }
+
+        .nav-item:hover { background-color: var(--sidebar-hover); color: #ffffff; }
+        .nav-item.active { background-color: var(--primary); color: #ffffff; }
+
+        .sidebar-footer {
+            padding: 16px 20px;
+            background-color: #090d16;
+            font-size: 12px;
+            color: #64748b;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .status-dot { width: 8px; height: 8px; background-color: #4ade80; border-radius: 50%; display: inline-block; }
+
+        .main-wrapper { flex: 1; display: flex; flex-direction: column; overflow-y: auto; }
+
+        header {
+            background-color: #ffffff;
+            border-bottom: 1px solid var(--border);
+            padding: 16px 32px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        header h1 { font-size: 20px; font-weight: 700; color: var(--text-dark); }
+
+        .content-area { padding: 28px 32px; max-width: 1350px; width: 100%; margin: 0 auto; }
+
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .kpi-card {
+            background: var(--card-bg);
+            padding: 22px;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            box-shadow: 0 2px 6px rgba(0,0,0,0.03);
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .kpi-title { color: var(--text-muted); font-size: 13px; font-weight: 600; }
+        .kpi-value { font-size: 26px; font-weight: 800; color: var(--primary); }
+
+        .welcome-hero {
+            background: linear-gradient(135deg, #0f766e 0%, #1e293b 100%);
+            color: #ffffff;
+            padding: 32px;
+            border-radius: 14px;
+            margin-bottom: 28px;
+        }
+
+        .welcome-hero h2 { font-size: 22px; margin-bottom: 8px; font-weight: 800; }
+        .welcome-hero p { font-size: 14px; color: #cbd5e1; max-width: 750px; line-height: 1.6; }
+
+        .section-card {
+            background: var(--card-bg);
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            box-shadow: 0 2px 6px rgba(0,0,0,0.03);
+            padding: 24px;
+            margin-bottom: 24px;
+        }
+
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 18px;
+        }
+
+        .section-header h2 { font-size: 17px; font-weight: 700; }
+
+        .btn-group { display: flex; gap: 8px; }
+
+        .btn {
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 13px;
+            border: none;
+            transition: 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn-primary { background-color: var(--primary); color: #ffffff; }
+        .btn-primary:hover { background-color: var(--primary-dark); }
+        .btn-outline { background-color: transparent; color: var(--primary); border: 1px solid var(--primary); }
+        .btn-outline:hover { background-color: #f0fdfa; }
+        .btn-success { background-color: var(--success); color: #ffffff; }
+        .btn-sm { padding: 4px 10px; font-size: 12px; border-radius: 4px; }
+
+        table { width: 100%; border-collapse: collapse; font-size: 14px; }
+        th { background-color: #f1f5f9; color: var(--text-muted); padding: 12px 14px; text-align: right; font-weight: 700; border-bottom: 2px solid var(--border); }
+        td { padding: 14px; border-bottom: 1px solid var(--border); color: var(--text-dark); vertical-align: middle; }
+        tr:hover { background-color: #f8fafc; }
+
+        .badge { display: inline-block; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+        .badge-success { background-color: #dcfce7; color: #15803d; }
+        .badge-warning { background-color: #fef3c7; color: #b45309; }
+        .badge-danger { background-color: #fee2e2; color: #b91c1c; }
+
+        .form-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin-bottom: 16px; }
+        .form-group { display: flex; flex-direction: column; gap: 6px; }
+        .form-group label { font-size: 13px; font-weight: 600; color: var(--text-muted); }
+        .form-group input, .form-group select { padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border); font-size: 14px; }
+
+        .tab-view { display: none; }
+        .tab-view.active { display: block; }
+
+        .modal-overlay {
+            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(15, 23, 42, 0.7); z-index: 1000; justify-content: center; align-items: center; padding: 20px;
+        }
+        .modal-box {
+            background: #ffffff; border-radius: 12px; max-width: 600px; width: 100%; max-height: 90vh;
+            display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 20px 25px rgba(0, 0, 0, 0.2);
+        }
+        .modal-header { padding: 16px 20px; background: #f8fafc; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; }
+        .modal-body { padding: 20px; text-align: center; overflow-y: auto; }
+        .modal-body img { max-width: 100%; max-height: 70vh; border-radius: 8px; }
+
+        @media print {
+            aside, header, .btn-group, .modal-overlay, .welcome-hero, form, .no-print { display: none !important; }
+            body, .main-wrapper, .content-area { overflow: visible !important; height: auto !important; padding: 0 !important; }
+            .tab-view { display: none !important; }
+            #view-journal { display: block !important; }
+            .section-card { border: none; box-shadow: none; padding: 0; }
+            table { border: 1px solid #000; }
+            th, td { border: 1px solid #ddd; padding: 8px; }
+        }
+    </style>
+</head>
+<body>
+
+    <aside>
+        <div class="sidebar-brand">
+            <h2>🏢 التأمينات الاجتماعية<br><span style="font-size: 12px; font-weight: normal; opacity: 0.8;">المنظومة المؤسسية الشاملة</span></h2>
+        </div>
+        <ul class="nav-list">
+            <li class="nav-item active" onclick="switchTab('home')"><span>🏠</span><span>الرئيسية (نظرة عامة)</span></li>
+            <li class="nav-item" onclick="switchTab('companies')"><span>🏛️</span><span>جهات العمل (المنشآت)</span></li>
+            <li class="nav-item" onclick="switchTab('contributions')"><span>💰</span><span>اشتراكات التأمين والتحصيل</span></li>
+            <li class="nav-item" onclick="switchTab('employees')"><span>👥</span><span>سجل المؤمن عليهم</span></li>
+            <li class="nav-item" onclick="switchTab('grants')"><span>🎁</span><span>المنافع والمنح</span></li>
+            <li class="nav-item" onclick="switchTab('journal')"><span>📑</span><span>دفتر اليومية العامة</span></li>
+        </ul>
+        <div class="sidebar-footer">
+            <span class="status-dot"></span>
+            <span>السحابة متصلة (Render + Neon)</span>
+        </div>
+    </aside>
+
+    <div class="main-wrapper">
+        <header>
+            <h1 id="page-title">الرئيسية - نظرة عامة</h1>
+            <div class="btn-group">
+                <button class="btn btn-primary" onclick="fetchDashboardData()">تحديث شامل ⟳</button>
+            </div>
+        </header>
+
+        <div class="content-area">
+
+            <!-- 1. الرئيسية -->
+            <div id="view-home" class="tab-view active">
+                <div class="welcome-hero">
+                    <h2>منظومة إدارة التأمينات الاجتماعية والرقابة المالية الآلية</h2>
+                    <p>إدارة مركزية تربط جهات العمل بالمؤمن عليهم واحتساب الاشتراكات الشهرية القانونية، مع الصرف الآلي للمنافع وتوليد القيود المحاسبية التلقائية بدون تدخل بشري.</p>
+                </div>
+                <div class="kpi-grid">
+                    <div class="kpi-card"><span class="kpi-title">المنشآت المسجلة</span><span class="kpi-value" id="kpi-companies">0</span></div>
+                    <div class="kpi-card"><span class="kpi-title">إجمالي المؤمن عليهم</span><span class="kpi-value" id="kpi-employees">0</span></div>
+                    <div class="kpi-card"><span class="kpi-title">إجمالي الاشتراكات المحصلة</span><span class="kpi-value" id="kpi-contributions">0.00</span></div>
+                    <div class="kpi-card"><span class="kpi-title">إجمالي المنح المصروفة</span><span class="kpi-value" id="kpi-grants">0.00</span></div>
+                </div>
+            </div>
+
+            <!-- 2. جهات العمل -->
+            <div id="view-companies" class="tab-view">
+                <div class="section-card">
+                    <div class="section-header"><h2>تسجيل جهة عمل جديدة</h2></div>
+                    <form id="companyForm" onsubmit="handleCreateCompany(event)">
+                        <div class="form-row">
+                            <div class="form-group"><label>اسم المنشأة</label><input type="text" id="c_name" required></div>
+                            <div class="form-group"><label>السجل التجاري</label><input type="text" id="c_cr" required></div>
+                            <div class="form-group"><label>الرقم التأميني للمنشأة</label><input type="text" id="c_ins" required placeholder="مثال: INS-2002"></div>
+                            <div class="form-group"><label>الهاتف</label><input type="text" id="c_phone"></div>
+                        </div>
+                        <button type="submit" class="btn btn-primary">حفظ واعتماد المنشأة</button>
+                    </form>
+                </div>
+                <div class="section-card">
+                    <div class="section-header"><h2>دليل جهات العمل المسجلة</h2></div>
+                    <table>
+                        <thead>
+                            <tr><th>المعرف</th><th>اسم المنشأة</th><th>الرقم التأميني</th><th>السجل التجاري</th><th>الهاتف</th></tr>
+                        </thead>
+                        <tbody id="companies-table-body"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 3. الاشتراكات التأمينية -->
+            <div id="view-contributions" class="tab-view">
+                <div class="section-card">
+                    <div class="section-header"><h2>محرك احتساب فواتير الاشتراكات (شهرياً)</h2></div>
+                    <form id="contribForm" onsubmit="handleGenerateContribution(event)">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>المنشأة</label>
+                                <select id="contrib_company_id" required></select>
+                            </div>
+                            <div class="form-group">
+                                <label>شهر الاستحقاق</label>
+                                <input type="month" id="contrib_month" required value="2026-10">
+                            </div>
+                        </div>
+                        <button type="submit" class="btn btn-primary">احتساب وتوليد قيد الاستحقاق (15%)</button>
+                    </form>
+                </div>
+                <div class="section-card">
+                    <div class="section-header"><h2>سجل فواتير الاشتراكات والتحصيل</h2></div>
+                    <table>
+                        <thead>
+                            <tr><th>رقم الفاتورة</th><th>المنشأة</th><th>الشهر</th><th>إجمالي الرواتب</th><th>حصة العامل (6%)</th><th>حصة المنشأة (9%)</th><th>الإجمالي (15%)</th><th>الحالة</th><th>الإجراء</th></tr>
+                        </thead>
+                        <tbody id="contributions-table-body"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 4. المؤمن عليهم -->
+            <div id="view-employees" class="tab-view">
+                <div class="section-card">
+                    <div class="section-header"><h2>سجل المؤمن عليهم والوثائق الثبوتية</h2></div>
+                    <table>
+                        <thead>
+                            <tr><th>الرقم التأميني</th><th>الاسم الكامل</th><th>جهة العمل</th><th>رقم الهوية</th><th>الراتب الأساسي</th><th>الجنس</th><th>البطاقة الشخصية</th></tr>
+                        </thead>
+                        <tbody id="employees-table-body"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 5. المنافع والمنح -->
+            <div id="view-grants" class="tab-view">
+                <div class="section-card">
+                    <div class="section-header"><h2>سجل طلبات منح الزواج والاعتمادات المالية</h2></div>
+                    <table>
+                        <thead>
+                            <tr><th>رقم الطلب</th><th>اسم المؤمن عليها</th><th>المبلغ المطلوب</th><th>وثيقة العقد</th><th>حالة الطلب</th><th>تاريخ التقديم</th></tr>
+                        </thead>
+                        <tbody id="grants-table-body"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 6. دفتر اليومية -->
+            <div id="view-journal" class="tab-view">
+                <div class="section-card">
+                    <div class="section-header">
+                        <h2>سجل دفتر اليومية العامة (القيود التلقائية)</h2>
+                        <button class="btn btn-outline" onclick="window.print()">🖨️ طباعة الدفتر الرسمي (PDF)</button>
+                    </div>
+                    <table>
+                        <thead>
+                            <tr><th>رقم القيد</th><th>التاريخ</th><th>البيان المحاسبي</th><th>اسم الحساب</th><th>مدين (ريال)</th><th>دائن (ريال)</th></tr>
+                        </thead>
+                        <tbody id="journal-table-body"></tbody>
+                    </table>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- نافذة المعاينة -->
+    <div id="imageModal" class="modal-overlay" onclick="closeModal()">
+        <div class="modal-box" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <h3 id="modalTitle">معاينة الوثيقة</h3>
+                <button style="border:none;background:none;font-size:20px;cursor:pointer" onclick="closeModal()">&times;</button>
+            </div>
+            <div class="modal-body"><img id="modalImg" src="" alt="وثيقة"></div>
+        </div>
+    </div>
+
+    <script>
+        const BASE_URL = "https://insurance-backend-1-qkfb.onrender.com";
+
+        function switchTab(tab) {
+            document.querySelectorAll('.tab-view').forEach(v => v.classList.remove('active'));
+            document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+            const target = document.getElementById(`view-${tab}`);
+            if (target) target.classList.add('active');
+
+            const titles = {
+                home: 'الرئيسية - نظرة عامة',
+                companies: 'إدارة جهات العمل والمنشآت',
+                contributions: 'اشتراكات التأمين الشهرية والتحصيل',
+                employees: 'سجل المؤمن عليهم والرواتب',
+                grants: 'إدارة طلبات منح الزواج والمنافع',
+                journal: 'دفتر اليومية العامة والقيود المحاسبية'
+            };
+            document.getElementById('page-title').innerText = titles[tab] || 'لوحة التحكم';
+
+            const idx = { home:0, companies:1, contributions:2, employees:3, grants:4, journal:5 };
+            if (document.querySelectorAll('.nav-item')[idx[tab]]) {
+                document.querySelectorAll('.nav-item')[idx[tab]].classList.add('active');
+            }
+        }
+
+        async function fetchDashboardData() {
+            try {
+                // 1. جهات العمل
+                const compRes = await fetch(`${BASE_URL}/api/companies`);
+                const companies = await compRes.json();
+                if (Array.isArray(companies)) {
+                    renderCompanies(companies);
+                    document.getElementById('kpi-companies').innerText = companies.length;
+
+                    const select = document.getElementById('contrib_company_id');
+                    if (select) {
+                        select.innerHTML = companies.map(c => `<option value="${c.id}">${c.company_name} (${c.insurance_number})</option>`).join('');
+                    }
+                } else {
+                    console.error("استجابة الشركات ليست مصفوفة:", companies);
+                    renderCompanies([]);
+                }
+
+                // 2. المؤمن عليهم
+                const empRes = await fetch(`${BASE_URL}/api/employees`);
+                const employees = await empRes.json();
+                if (Array.isArray(employees)) {
+                    renderEmployees(employees);
+                    document.getElementById('kpi-employees').innerText = employees.length;
+                }
+
+                // 3. الاشتراكات
+                const contribRes = await fetch(`${BASE_URL}/api/contributions`);
+                const contributions = await contribRes.json();
+                if (Array.isArray(contributions)) {
+                    renderContributions(contributions);
+                }
+
+                // 4. المنح
+                const grantRes = await fetch(`${BASE_URL}/api/marriage-grants`);
+                const grants = await grantRes.json();
+                if (Array.isArray(grants)) {
+                    renderGrants(grants);
+                }
+
+                // 5. دفتر اليومية
+                fetchJournalEntries();
+            } catch (err) {
+                console.error("خطأ تحديث البيانات:", err);
+            }
+        }
+
+        function renderCompanies(list) {
+            const tbody = document.getElementById('companies-table-body');
+            if (!Array.isArray(list) || list.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">لا توجد منشآت مسجلة بعد</td></tr>';
+                return;
+            }
+            tbody.innerHTML = list.map(c => `
+                <tr>
+                    <td>#${c.id}</td>
+                    <td><strong>${c.company_name}</strong></td>
+                    <td>${c.insurance_number}</td>
+                    <td>${c.commercial_register}</td>
+                    <td>${c.phone || '-'}</td>
+                </tr>
+            `).join('');
+        }
+
+        function renderEmployees(list) {
+            const tbody = document.getElementById('employees-table-body');
+            if (!Array.isArray(list) || list.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">لا يوجد مؤمن عليهم مسجلون</td></tr>';
+                return;
+            }
+            tbody.innerHTML = list.map(e => `
+                <tr>
+                    <td><strong>${e.insurance_number || 'معلق'}</strong></td>
+                    <td>${e.full_name}</td>
+                    <td>${e.company_name || 'الشركة العامة'}</td>
+                    <td>${e.national_id}</td>
+                    <td>${parseFloat(e.basic_salary).toLocaleString()} ريال</td>
+                    <td>${e.gender === 'FEMALE' ? 'أنثى' : 'ذكر'}</td>
+                    <td>${e.national_id_photo_url ? `<button class="btn btn-outline btn-sm" onclick="previewImage('${BASE_URL}${e.national_id_photo_url}', 'بطاقة: ${e.full_name}')">🪪 عرض</button>` : '-'}</td>
+                </tr>
+            `).join('');
+        }
+
+        function renderContributions(list) {
+            const tbody = document.getElementById('contributions-table-body');
+            if (!Array.isArray(list) || list.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;">لا توجد مطالبات شهرية مسجلة</td></tr>';
+                document.getElementById('kpi-contributions').innerText = '0.00 ريال';
+                return;
+            }
+            let totalPaid = 0;
+            tbody.innerHTML = list.map(b => {
+                if (b.status === 'PAID') totalPaid += parseFloat(b.total_contribution);
+                const isPaid = b.status === 'PAID';
+                return `
+                    <tr>
+                        <td>#${b.id}</td>
+                        <td>${b.company_name}</td>
+                        <td><strong>${b.billing_month}</strong></td>
+                        <td>${parseFloat(b.total_salaries).toLocaleString()} ريال</td>
+                        <td>${parseFloat(b.employee_share).toLocaleString()} ريال</td>
+                        <td>${parseFloat(b.employer_share).toLocaleString()} ريال</td>
+                        <td style="font-weight:bold;color:var(--primary);">${parseFloat(b.total_contribution).toLocaleString()} ريال</td>
+                        <td><span class="badge ${isPaid ? 'badge-success' : 'badge-danger'}">${isPaid ? 'تم التحصيل' : 'مستحقة'}</span></td>
+                        <td>${!isPaid ? `<button class="btn btn-success btn-sm" onclick="payContribution(${b.id})">تحصيل مالي 💰</button>` : 'مكتمل'}</td>
+                    </tr>
+                `;
+            }).join('');
+            document.getElementById('kpi-contributions').innerText = totalPaid.toLocaleString() + ' ريال';
+        }
+
+        function renderGrants(list) {
+            const tbody = document.getElementById('grants-table-body');
+            if (!Array.isArray(list) || list.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;">لا توجد طلبات منح مسجلة</td></tr>';
+                document.getElementById('kpi-grants').innerText = '0.00 ريال';
+                return;
+            }
+            let total = 0;
+            tbody.innerHTML = list.map(g => {
+                if (g.status === 'APPROVED') total += parseFloat(g.requested_amount);
+                return `
+                    <tr>
+                        <td>#${g.id}</td>
+                        <td><strong>${g.full_name}</strong></td>
+                        <td>${parseFloat(g.requested_amount).toLocaleString()} ريال</td>
+                        <td>${g.document_url ? `<button class="btn btn-outline btn-sm" onclick="previewImage('${BASE_URL}${g.document_url}', 'عقد زواج #${g.id}')">📄 عرض</button>` : '-'}</td>
+                        <td><span class="badge ${g.status === 'APPROVED' ? 'badge-success' : 'badge-warning'}">${g.status === 'APPROVED' ? 'معتمد ومصروف' : 'قيد المراجعة'}</span></td>
+                        <td>${g.request_date ? g.request_date.substring(0, 10) : '-'}</td>
+                    </tr>
+                `;
+            }).join('');
+            document.getElementById('kpi-grants').innerText = total.toLocaleString() + ' ريال';
+        }
+
+        async function fetchJournalEntries() {
+            try {
+                const res = await fetch(`${BASE_URL}/api/journal-entries`);
+                if (!res.ok) return;
+                const entries = await res.json();
+                const tbody = document.getElementById('journal-table-body');
+                if (!Array.isArray(entries) || entries.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;">لا توجد قيود مسجلة</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = entries.map(row => `
+                    <tr>
+                        <td><strong>#${row.entry_id}</strong></td>
+                        <td>${row.entry_date ? row.entry_date.substring(0, 10) : '-'}</td>
+                        <td>${row.description}</td>
+                        <td>${row.account_name}</td>
+                        <td style="color:#0f766e;font-weight:bold;">${parseFloat(row.debit) > 0 ? parseFloat(row.debit).toLocaleString() : '-'}</td>
+                        <td style="color:#b45309;font-weight:bold;">${parseFloat(row.credit) > 0 ? parseFloat(row.credit).toLocaleString() : '-'}</td>
+                    </tr>
+                `).join('');
+            } catch (err) {
+                console.error("خطأ جلب القيود:", err);
+            }
+        }
+
+        async function handleCreateCompany(e) {
+            e.preventDefault();
+            const data = {
+                company_name: document.getElementById('c_name').value,
+                commercial_register: document.getElementById('c_cr').value,
+                insurance_number: document.getElementById('c_ins').value,
+                phone: document.getElementById('c_phone').value || 'لا يوجد',
+                tax_number: 'TAX-' + Math.floor(1000 + Math.random() * 9000),
+                address: 'المقر الرئيسي'
+            };
+
+            try {
+                const res = await fetch(`${BASE_URL}/api/companies`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                const result = await res.json();
+                if (res.ok) {
+                    alert('✅ تم حفظ واعتماد المنشأة بنجاح');
+                    document.getElementById('companyForm').reset();
+                    fetchDashboardData();
+                } else {
+                    alert('❌ فشل الحفظ من السيرفر: ' + (result.error || result.message || 'خطأ غير معروف'));
+                }
+            } catch (err) {
+                alert('❌ تعذر الاتصال بالسيرفر: ' + err.message);
+            }
+        }
+
+        async function handleGenerateContribution(e) {
+            e.preventDefault();
+            const compSelect = document.getElementById('contrib_company_id');
+            if (!compSelect.value) {
+                alert('يرجى اختيار المنشأة أولاً');
+                return;
+            }
+            const data = {
+                company_id: compSelect.value,
+                billing_month: document.getElementById('contrib_month').value
+            };
+            try {
+                const res = await fetch(`${BASE_URL}/api/contributions/generate`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                const result = await res.json();
+                if (res.ok) {
+                    alert(result.message);
+                    fetchDashboardData();
+                } else {
+                    alert('تنبيه: ' + (result.error || 'فشل الاحتساب'));
+                }
+            } catch (err) {
+                alert('تعذر الاتصال بالسيرفر');
+            }
+        }
+
+        async function payContribution(id) {
+            if (!confirm('هل أنت متأكد من تأكيد سداد الفاتورة وقبض المبلغ؟')) return;
+            try {
+                const res = await fetch(`${BASE_URL}/api/contributions/${id}/pay`, { method: 'POST' });
+                if (res.ok) {
+                    alert('تم السداد وإنشاء قيد التحصيل بنجاح');
+                    fetchDashboardData();
+                }
+            } catch (err) {
+                alert('فشل إتمام السداد');
+            }
+        }
+
+        function previewImage(url, title) {
+            document.getElementById('modalTitle').innerText = title;
+            const img = document.getElementById('modalImg');
+            img.onerror = function() { this.src = 'https://placehold.co/500x350?text=تعذر+عرض+المرفق'; };
+            img.src = url;
+            document.getElementById('imageModal').style.display = 'flex';
+        }
+
+        function closeModal() {
+            document.getElementById('imageModal').style.display = 'none';
+        }
+
+        window.onload = fetchDashboardData;
+    </script>
+</body>
+</html>

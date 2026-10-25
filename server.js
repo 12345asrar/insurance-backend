@@ -4,10 +4,12 @@ const cors = require('cors');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const jwt = require('jsonwebtoken');
 const pool = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const JWT_SECRET = process.env.JWT_SECRET || 'insurance_secret_jwt_key_2026';
 
 app.use(cors());
 app.use(express.json());
@@ -19,14 +21,14 @@ if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
 
-// حل مشكلة OpaqueResponseBlocking وحظر الصور عبر المتصفح
+// ترويسات أمان الصور ومنع حظر المتصفح
 app.use('/uploads', (req, res, next) => {
   res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
   res.setHeader('Access-Control-Allow-Origin', '*');
   next();
 }, express.static(uploadDir));
 
-// إعداد التخزين عبر Multer
+// إعداد Multer
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
   filename: (req, file, cb) => {
@@ -44,21 +46,68 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage: storage,
-  limits: { fileSize: 10 * 1024 * 1024 },
-  fileFilter: (req, file, cb) => {
-    const allowed = /jpeg|jpg|png|pdf/;
-    const ext = allowed.test(path.extname(file.originalname).toLowerCase());
-    const mime = allowed.test(file.mimetype);
-    if (ext || mime || !path.extname(file.originalname)) {
-      cb(null, true);
-    } else {
-      cb(new Error('الملف يجب أن يكون صورة أو مستند PDF'));
+  limits: { fileSize: 10 * 1024 * 1024 }
+});
+
+// ========================================================
+// برمجيات التحقق الوسيطة (Auth & RBAC Middlewares)
+// ========================================================
+function authenticateToken(req, res, next) {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) return res.status(401).json({ error: 'غير مصرح: يجب تسجيل الدخول' });
+
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) return res.status(403).json({ error: 'انتهت صلاحية الجلسة أو الرمز غير صالح' });
+    req.user = user;
+    next();
+  });
+}
+
+function requireRoles(...allowedRoles) {
+  return (req, res, next) => {
+    if (!req.user || !allowedRoles.includes(req.user.role)) {
+      return res.status(403).json({ error: 'عذراً: ليس لديك صلاحية للقيام بهذا الإجراء' });
     }
+    next();
+  };
+}
+
+// ========================================================
+// 1. تسجيل الدخول والمصادقة (Authentication)
+// ========================================================
+app.post('/api/auth/login', async (req, res) => {
+  const { username, password } = req.body;
+  try {
+    const userRes = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
+    if (userRes.rows.length === 0) {
+      return res.status(401).json({ error: 'اسم المستخدم أو كلمة المرور غير صحيحة' });
+    }
+
+    const user = userRes.rows[0];
+    if (user.password !== password) {
+      return res.status(401).json({ error: 'اسم المستخدم أو كلمة المرور غير صحيحة' });
+    }
+
+    const token = jwt.sign(
+      { id: user.id, username: user.username, role: user.role, full_name: user.full_name },
+      JWT_SECRET,
+      { expiresIn: '8h' }
+    );
+
+    res.json({
+      message: 'تم تسجيل الدخول بنجاح',
+      token,
+      user: { id: user.id, username: user.username, role: user.role, full_name: user.full_name }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
 // ========================================================
-// 1. إدارة جهات العمل والمنشآت (Companies)
+// 2. جهات العمل (المنشآت)
 // ========================================================
 app.get('/api/companies', async (req, res) => {
   try {
@@ -84,7 +133,7 @@ app.post('/api/companies', async (req, res) => {
 });
 
 // ========================================================
-// 2. إدارة المؤمن عليهم
+// 3. المؤمن عليهم
 // ========================================================
 app.get('/api/employees', async (req, res) => {
   try {
@@ -105,9 +154,7 @@ app.post('/api/employees', upload.single('national_id_photo'), async (req, res) 
   try {
     const { company_id, national_id, full_name, gender, basic_salary, hire_date } = req.body;
 
-    if (!req.file) {
-      return res.status(400).json({ error: 'صورة الهوية الوطنية وثيقة إجبارية' });
-    }
+    if (!req.file) return res.status(400).json({ error: 'صورة الهوية الوطنية وثيقة إجبارية' });
     if (!national_id || !full_name || !gender || !basic_salary) {
       return res.status(400).json({ error: 'جميع الحقول الأساسية مطلوبة' });
     }
@@ -140,7 +187,7 @@ app.post('/api/employees', upload.single('national_id_photo'), async (req, res) 
 });
 
 // ========================================================
-// 3. محرك احتساب وتوليد اشتراكات التأمين الشهرية
+// 4. محرك الاشتراكات الشهرية ودورة التحصيل
 // ========================================================
 app.get('/api/contributions', async (req, res) => {
   try {
@@ -157,7 +204,6 @@ app.get('/api/contributions', async (req, res) => {
   }
 });
 
-// توليد فاتورة اشتراك شهري مع القيد المحاسبي
 app.post('/api/contributions/generate', async (req, res) => {
   const { company_id, billing_month } = req.body;
   const client = await pool.connect();
@@ -165,7 +211,6 @@ app.post('/api/contributions/generate', async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    // 1. حساب مجموع رواتب الموظفين في المنشأة
     const salRes = await client.query(
       `SELECT COALESCE(SUM(basic_salary), 0) AS total_salaries FROM employees WHERE company_id = $1`,
       [company_id]
@@ -177,12 +222,10 @@ app.post('/api/contributions/generate', async (req, res) => {
       return res.status(400).json({ error: 'لا يوجد موظفون برواتب مسجلين في هذه المنشأة' });
     }
 
-    // النسب التأمينية المعتمدة: 6% حصة العامل، 9% حصة المنشأة = إجمالي 15%
     const employeeShare = parseFloat((totalSalaries * 0.06).toFixed(2));
     const employerShare = parseFloat((totalSalaries * 0.09).toFixed(2));
     const totalContribution = parseFloat((employeeShare + employerShare).toFixed(2));
 
-    // 2. إدراج الفاتورة الشهرية
     const billInsert = `
       INSERT INTO monthly_contributions (company_id, billing_month, total_salaries, employee_share, employer_share, total_contribution, status)
       VALUES ($1, $2, $3, $4, $5, $6, 'UNPAID')
@@ -193,8 +236,6 @@ app.post('/api/contributions/generate', async (req, res) => {
     const billResult = await client.query(billInsert, [company_id, billing_month, totalSalaries, employeeShare, employerShare, totalContribution]);
     const bill = billResult.rows[0];
 
-    // 3. توليد القيد المحاسبي لاستحقاق الاشتراكات
-    // من حـ/ مدينو الاشتراكات (1201) إلى حـ/ إيرادات الاشتراكات التأمينية (4101)
     const journalRes = await client.query(
       `INSERT INTO journal_entries (entry_date, description, reference_type, reference_id)
        VALUES (CURRENT_DATE, $1, 'MONTHLY_CONTRIBUTION', $2) RETURNING id`,
@@ -202,9 +243,7 @@ app.post('/api/contributions/generate', async (req, res) => {
     );
     const jId = journalRes.rows[0].id;
 
-    // مدين: مدينو الاشتراكات
     await client.query(`INSERT INTO journal_entry_lines (journal_entry_id, account_code, debit, credit) VALUES ($1, '1201', $2, 0)`, [jId, totalContribution]);
-    // دائن: إيرادات الاشتراكات
     await client.query(`INSERT INTO journal_entry_lines (journal_entry_id, account_code, debit, credit) VALUES ($1, '4101', 0, $2)`, [jId, totalContribution]);
 
     await client.query('COMMIT');
@@ -217,7 +256,6 @@ app.post('/api/contributions/generate', async (req, res) => {
   }
 });
 
-// سداد الفاتورة الشهرية وتوليد قيد القبض
 app.post('/api/contributions/:id/pay', async (req, res) => {
   const billId = req.params.id;
   const client = await pool.connect();
@@ -236,7 +274,6 @@ app.post('/api/contributions/:id/pay', async (req, res) => {
 
     await client.query("UPDATE monthly_contributions SET status = 'PAID' WHERE id = $1", [billId]);
 
-    // قيد التحصيل: من حـ/ البنك (1101) إلى حـ/ مدينو الاشتراكات (1201)
     const jRes = await client.query(
       `INSERT INTO journal_entries (entry_date, description, reference_type, reference_id)
        VALUES (CURRENT_DATE, $1, 'CONTRIBUTION_PAYMENT', $2) RETURNING id`,
@@ -257,7 +294,7 @@ app.post('/api/contributions/:id/pay', async (req, res) => {
 });
 
 // ========================================================
-// 4. طلبات واعتماد المنح والمنافع
+// 5. منح ومنافع التأمين
 // ========================================================
 app.get('/api/marriage-grants', async (req, res) => {
   try {
@@ -319,7 +356,6 @@ app.post('/api/marriage-grant/:id/approve', async (req, res) => {
 
     await client.query(`UPDATE compensation_grants SET status = 'APPROVED' WHERE id = $1`, [grantId]);
 
-    // قيد الصرف المحاسبي: من حـ/ مصروفات المنافع (5101) إلى حـ/ البنك (1101)
     const jRes = await client.query(
       `INSERT INTO journal_entries (entry_date, description, reference_type, reference_id)
        VALUES (CURRENT_DATE, $1, 'MARRIAGE_GRANT', $2) RETURNING id`,
@@ -340,7 +376,7 @@ app.post('/api/marriage-grant/:id/approve', async (req, res) => {
 });
 
 // ========================================================
-// 5. استعراض دفتر اليومية العامة المحاسبي
+// 6. دفتر اليومية العامة المحاسبي
 // ========================================================
 app.get('/api/journal-entries', async (req, res) => {
   try {
@@ -371,5 +407,5 @@ app.get('/api/journal-entries', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`📡 الخادم يعمل بكامل الوحدات التأمينية: http://localhost:${PORT}`);
+  console.log(`📡 الخادم يعمل بكامل الوحدات التأمينية والمصادقة: http://localhost:${PORT}`);
 });
