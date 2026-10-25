@@ -30,7 +30,13 @@ const storage = multer.diskStorage({
   },
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    const ext = path.extname(file.originalname);
+    let ext = path.extname(file.originalname);
+    if (!ext) {
+      if (file.mimetype === 'image/jpeg') ext = '.jpg';
+      else if (file.mimetype === 'image/png') ext = '.png';
+      else if (file.mimetype === 'application/pdf') ext = '.pdf';
+      else ext = '.jpg';
+    }
     cb(null, file.fieldname + '-' + uniqueSuffix + ext);
   }
 });
@@ -39,17 +45,33 @@ const upload = multer({
   storage: storage,
   limits: { fileSize: 10 * 1024 * 1024 }, // حد أقصى 10 ميجابايت للملف
   fileFilter: (req, file, cb) => {
-    const allowedTypes = /jpeg|jpg|png|pdf/;
-    const extName = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-    const mimeType = allowedTypes.test(file.mimetype);
+    const allowedExts = /jpeg|jpg|png|pdf/;
+    const ext = path.extname(file.originalname).toLowerCase();
+    const isExtAllowed = allowedExts.test(ext);
+    const isMimeAllowed = /image\/(jpeg|jpg|png)|application\/pdf/.test(file.mimetype);
 
-    if (extName && mimeType) {
+    // قبول الملف إذا تطابق الامتداد أو نوع الميديا المرفق
+    if (isExtAllowed || isMimeAllowed || !ext) {
       return cb(null, true);
     } else {
       cb(new Error('الملف يجب أن يكون صورة (JPEG, PNG) أو مستند PDF'));
     }
   }
 });
+
+// التأكد من وجود شركة افتراضية برقم 1 لمنع أخطاء المفاتيح الأجنبية
+async function ensureDefaultCompany() {
+  try {
+    await pool.query(`
+      INSERT INTO companies (id, name, commercial_register)
+      VALUES (1, 'الشركة الافتراضية للتأمينات', 'CR-1001')
+      ON CONFLICT (id) DO NOTHING;
+    `);
+  } catch (err) {
+    // تجاهل الخطأ في حال لم يكن جدول companies مستخدماً بنفس الحقول
+  }
+}
+ensureDefaultCompany();
 
 // ==========================================
 // 1. تسجيل مؤمن عليه جديد (مع إجبارية صورة البطاقة)
@@ -198,14 +220,14 @@ app.post('/api/marriage-grant/:id/approve', async (req, res) => {
     const journalEntryId = journalResult.rows[0].id;
     const grantAmount = grant.requested_amount;
 
-    // الطرف المدين: حساب مصروفات منافع التأمين (رقم الحساب الافتراضي 5101)
+    // الطرف المدين: حساب مصروفات منافع التأمين (رقم الحساب 5101)
     await client.query(
       `INSERT INTO journal_entry_lines (journal_entry_id, account_code, debit, credit)
        VALUES ($1, '5101', $2, 0)`,
       [journalEntryId, grantAmount]
     );
 
-    // الطرف الدائن: حساب الصندوق أو البنك (رقم الحساب الافتراضي 1101)
+    // الطرف الدائن: حساب الصندوق أو البنك (رقم الحساب 1101)
     await client.query(
       `INSERT INTO journal_entry_lines (journal_entry_id, account_code, debit, credit)
        VALUES ($1, '1101', 0, $2)`,
@@ -251,6 +273,34 @@ app.get('/api/marriage-grants', async (req, res) => {
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// 5. استعراض دفتر اليومية العامة والقيود المحاسبية
+app.get('/api/journal-entries', async (req, res) => {
+  try {
+    const query = `
+      SELECT 
+        je.id AS entry_id,
+        je.entry_date,
+        je.description,
+        jel.account_code,
+        CASE 
+          WHEN jel.account_code = '5101' THEN 'حـ/ مصروفات منافع التأمين (منح الزواج)'
+          WHEN jel.account_code = '1101' THEN 'حـ/ الصندوق والبنك'
+          ELSE jel.account_code
+        END AS account_name,
+        jel.debit,
+        jel.credit
+      FROM journal_entries je
+      JOIN journal_entry_lines jel ON je.id = jel.journal_entry_id
+      ORDER BY je.id DESC, jel.id ASC;
+    `;
+    const result = await pool.query(query);
+    res.json(result.rows);
+  } catch (err) {
+    console.error('خطأ في جلب القيود المحاسبية:', err);
+    res.status(500).json({ error: 'فشل في استرجاع القيود المحاسبية', details: err.message });
   }
 });
 
