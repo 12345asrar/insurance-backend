@@ -18,7 +18,13 @@ const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
-app.use('/uploads', express.static(uploadDir));
+
+// حل مشكلة OpaqueResponseBlocking وحظر الصور عبر المتصفح
+app.use('/uploads', (req, res, next) => {
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  next();
+}, express.static(uploadDir));
 
 // إعداد التخزين عبر Multer
 const storage = multer.diskStorage({
@@ -153,7 +159,7 @@ app.get('/api/contributions', async (req, res) => {
 
 // توليد فاتورة اشتراك شهري مع القيد المحاسبي
 app.post('/api/contributions/generate', async (req, res) => {
-  const { company_id, billing_month } = req.body; // e.g., '2026-10'
+  const { company_id, billing_month } = req.body;
   const client = await pool.connect();
 
   try {
