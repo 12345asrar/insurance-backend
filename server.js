@@ -28,7 +28,7 @@ app.use('/uploads', (req, res, next) => {
   next();
 }, express.static(uploadDir));
 
-// إعداد Multer
+// إعداد Multer لرفع الملفات
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
   filename: (req, file, cb) => {
@@ -46,7 +46,17 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage: storage,
-  limits: { fileSize: 10 * 1024 * 1024 }
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowed = /jpeg|jpg|png|pdf/;
+    const ext = allowed.test(path.extname(file.originalname).toLowerCase());
+    const mime = allowed.test(file.mimetype);
+    if (ext || mime || !path.extname(file.originalname)) {
+      cb(null, true);
+    } else {
+      cb(new Error('الملف يجب أن يكون صورة أو مستند PDF'));
+    }
+  }
 });
 
 // ========================================================
@@ -107,7 +117,7 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 // ========================================================
-// 2. جهات العمل (المنشآت)
+// 2. جهات العمل والمنشآت (Companies)
 // ========================================================
 app.get('/api/companies', async (req, res) => {
   try {
@@ -133,7 +143,7 @@ app.post('/api/companies', async (req, res) => {
 });
 
 // ========================================================
-// 3. المؤمن عليهم
+// 3. إدارة المؤمن عليهم
 // ========================================================
 app.get('/api/employees', async (req, res) => {
   try {
@@ -154,7 +164,9 @@ app.post('/api/employees', upload.single('national_id_photo'), async (req, res) 
   try {
     const { company_id, national_id, full_name, gender, basic_salary, hire_date } = req.body;
 
-    if (!req.file) return res.status(400).json({ error: 'صورة الهوية الوطنية وثيقة إجبارية' });
+    if (!req.file) {
+      return res.status(400).json({ error: 'صورة الهوية الوطنية وثيقة إجبارية' });
+    }
     if (!national_id || !full_name || !gender || !basic_salary) {
       return res.status(400).json({ error: 'جميع الحقول الأساسية مطلوبة' });
     }
@@ -187,7 +199,7 @@ app.post('/api/employees', upload.single('national_id_photo'), async (req, res) 
 });
 
 // ========================================================
-// 4. محرك الاشتراكات الشهرية ودورة التحصيل
+// 4. محرك الاشتراكات التأمينية الشهرية ودورة التحصيل
 // ========================================================
 app.get('/api/contributions', async (req, res) => {
   try {
@@ -211,6 +223,7 @@ app.post('/api/contributions/generate', async (req, res) => {
   try {
     await client.query('BEGIN');
 
+    // 1. احتساب إجمالي رواتب منشأة معينة
     const salRes = await client.query(
       `SELECT COALESCE(SUM(basic_salary), 0) AS total_salaries FROM employees WHERE company_id = $1`,
       [company_id]
@@ -222,10 +235,12 @@ app.post('/api/contributions/generate', async (req, res) => {
       return res.status(400).json({ error: 'لا يوجد موظفون برواتب مسجلين في هذه المنشأة' });
     }
 
+    // النسب التأمينية المعتمدة: 6% حصة العامل، 9% حصة المنشأة = 15% إجمالي
     const employeeShare = parseFloat((totalSalaries * 0.06).toFixed(2));
     const employerShare = parseFloat((totalSalaries * 0.09).toFixed(2));
     const totalContribution = parseFloat((employeeShare + employerShare).toFixed(2));
 
+    // 2. إدراج أو تحديث فاتورة الاشتراك
     const billInsert = `
       INSERT INTO monthly_contributions (company_id, billing_month, total_salaries, employee_share, employer_share, total_contribution, status)
       VALUES ($1, $2, $3, $4, $5, $6, 'UNPAID')
@@ -236,6 +251,8 @@ app.post('/api/contributions/generate', async (req, res) => {
     const billResult = await client.query(billInsert, [company_id, billing_month, totalSalaries, employeeShare, employerShare, totalContribution]);
     const bill = billResult.rows[0];
 
+    // 3. توليد قيد استحقاق الاشتراكات تلقائياً
+    // من حـ/ مدينو الاشتراكات التأمينية (1201) إلى حـ/ إيرادات الاشتراكات التأمينية (4101)
     const journalRes = await client.query(
       `INSERT INTO journal_entries (entry_date, description, reference_type, reference_id)
        VALUES (CURRENT_DATE, $1, 'MONTHLY_CONTRIBUTION', $2) RETURNING id`,
@@ -256,6 +273,7 @@ app.post('/api/contributions/generate', async (req, res) => {
   }
 });
 
+// سداد فاتورة الاشتراك وقيد القبض
 app.post('/api/contributions/:id/pay', async (req, res) => {
   const billId = req.params.id;
   const client = await pool.connect();
@@ -274,6 +292,7 @@ app.post('/api/contributions/:id/pay', async (req, res) => {
 
     await client.query("UPDATE monthly_contributions SET status = 'PAID' WHERE id = $1", [billId]);
 
+    // قيد التحصيل: من حـ/ البنك والصندوق (1101) إلى حـ/ مدينو الاشتراكات التأمينية (1201)
     const jRes = await client.query(
       `INSERT INTO journal_entries (entry_date, description, reference_type, reference_id)
        VALUES (CURRENT_DATE, $1, 'CONTRIBUTION_PAYMENT', $2) RETURNING id`,
@@ -294,7 +313,7 @@ app.post('/api/contributions/:id/pay', async (req, res) => {
 });
 
 // ========================================================
-// 5. منح ومنافع التأمين
+// 5. منح ومنافع التأمين (Compensation Grants)
 // ========================================================
 app.get('/api/marriage-grants', async (req, res) => {
   try {
@@ -356,6 +375,7 @@ app.post('/api/marriage-grant/:id/approve', async (req, res) => {
 
     await client.query(`UPDATE compensation_grants SET status = 'APPROVED' WHERE id = $1`, [grantId]);
 
+    // قيد الصرف: من حـ/ مصروفات منافع التأمين (5101) إلى حـ/ البنك والصندوق (1101)
     const jRes = await client.query(
       `INSERT INTO journal_entries (entry_date, description, reference_type, reference_id)
        VALUES (CURRENT_DATE, $1, 'MARRIAGE_GRANT', $2) RETURNING id`,
@@ -376,7 +396,7 @@ app.post('/api/marriage-grant/:id/approve', async (req, res) => {
 });
 
 // ========================================================
-// 6. دفتر اليومية العامة المحاسبي
+// 6. استعراض دفتر اليومية العامة المحاسبي
 // ========================================================
 app.get('/api/journal-entries', async (req, res) => {
   try {
