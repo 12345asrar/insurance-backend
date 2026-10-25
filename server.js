@@ -11,30 +11,41 @@ const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || 'insurance_secret_jwt_key_2026';
 
 app.use(cors());
-// زيادة حد استيعاب النصوص لاستقبال صور الـ Base64 الكبيرة بأمان
 app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ extended: true, limit: '25mb' }));
 
-// ========================================================
-// إعداد Multer للاحتفاظ بالملف في الذاكرة المؤقتة (Memory Storage)
-// لتحويله مباشرة إلى Base64 وتخزينه في Neon دون الحاجة لمجلد محلي
-// ========================================================
+// إعداد Multer للاحتفاظ بالملفات في الذاكرة المؤقتة للتحويل إلى Base64
 const storage = multer.memoryStorage();
 const upload = multer({
   storage: storage,
-  limits: { fileSize: 8 * 1024 * 1024 } // حد أقصى 8 ميجابايت للمستند
+  limits: { fileSize: 8 * 1024 * 1024 }
 });
 
-// دالة مساعدة لتحويل الملف إلى صيغة Data URL (Base64)
+// دالة تحويل الملفات إلى نصوص Base64 للتخزين الدائم داخل Neon
 function fileToBase64(file) {
   if (!file || !file.buffer) return null;
   const mimeType = file.mimetype || 'image/jpeg';
   return `data:${mimeType};base64,${file.buffer.toString('base64')}`;
 }
 
-// ========================================================
+// دالة مساعدة لتسجيل الحركات الرقابية في جدول audit_logs
+async function logAudit(req, action, details) {
+  try {
+    const userId = req.user ? req.user.id : null;
+    const username = req.user ? req.user.username : (req.body.username || 'System/Guest');
+    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1';
+
+    await pool.query(
+      `INSERT INTO audit_logs (user_id, username, action, details, ip_address)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [userId, username, action, details, ip]
+    );
+  } catch (err) {
+    console.error('فشل توثيق العملية في سجل التدقيق:', err.message);
+  }
+}
+
 // برمجيات التحقق الوسيطة (Auth & RBAC Middlewares)
-// ========================================================
 function authenticateToken(req, res, next) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
@@ -65,6 +76,7 @@ app.post('/api/auth/login', async (req, res) => {
   try {
     const userRes = await pool.query('SELECT * FROM users WHERE TRIM(username) = TRIM($1)', [username]);
     if (userRes.rows.length === 0) {
+      await logAudit(req, 'LOGIN_FAILED', `محاولة فاشلة باسم مستخدم غير مسجل: ${username}`);
       return res.status(401).json({ error: 'اسم المستخدم أو كلمة المرور غير صحيحة' });
     }
 
@@ -78,6 +90,7 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     if (!isMatch) {
+      await logAudit(req, 'LOGIN_FAILED', `محاولة دخول بكلمة مرور خاطئة للحساب: ${username}`);
       return res.status(401).json({ error: 'اسم المستخدم أو كلمة المرور غير صحيحة' });
     }
 
@@ -86,6 +99,9 @@ app.post('/api/auth/login', async (req, res) => {
       JWT_SECRET,
       { expiresIn: '8h' }
     );
+
+    req.user = user;
+    await logAudit(req, 'LOGIN_SUCCESS', `تم تسجيل الدخول بنجاح للمستخدم: ${user.username} بدور ${user.role}`);
 
     res.json({
       message: 'تم تسجيل الدخول بنجاح',
@@ -117,14 +133,18 @@ app.post('/api/companies', authenticateToken, requireRoles('ADMIN', 'REGISTRATIO
       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *;
     `;
     const result = await pool.query(query, [company_name, commercial_register, tax_number, insurance_number, phone, address]);
-    res.status(201).json({ message: 'تم تسجيل جهة العمل بنجاح', company: result.rows[0] });
+    const company = result.rows[0];
+
+    await logAudit(req, 'CREATE_COMPANY', `تسجيل منشأة جديدة: ${company.company_name} (رقم تأميني: ${company.insurance_number})`);
+
+    res.status(201).json({ message: 'تم تسجيل جهة العمل بنجاح', company });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
 // ========================================================
-// 3. إدارة المؤمن عليهم (Employees) مع تخزين الصورة دائمياً
+// 3. إدارة المؤمن عليهم (Employees)
 // ========================================================
 app.get('/api/employees', async (req, res) => {
   try {
@@ -153,7 +173,6 @@ app.post('/api/employees', upload.single('national_id_photo'), async (req, res) 
     }
 
     const insuranceNumber = 'SSN-' + Math.floor(100000 + Math.random() * 900000);
-    // تحويل الملف إلى نص مشفر دائم يحفظ في Neon مباشرة
     const photoBase64 = fileToBase64(req.file);
 
     const query = `
@@ -174,7 +193,10 @@ app.post('/api/employees', upload.single('national_id_photo'), async (req, res) 
       insuranceNumber
     ]);
 
-    res.status(201).json({ message: 'تم تسجيل المؤمن عليه بنجاح وتخزين هويته دائمياً', employee: result.rows[0] });
+    const employee = result.rows[0];
+    await logAudit(req, 'REGISTER_EMPLOYEE', `تسجيل مؤمن عليه: ${employee.full_name} برقم تأميني ${employee.insurance_number} في منشأة ${company_id}`);
+
+    res.status(201).json({ message: 'تم تسجيل المؤمن عليه بنجاح وتخزين هويته دائمياً', employee });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -241,6 +263,9 @@ app.post('/api/contributions/generate', authenticateToken, requireRoles('ADMIN',
     await client.query(`INSERT INTO journal_entry_lines (journal_entry_id, account_code, debit, credit) VALUES ($1, '4101', 0, $2)`, [jId, totalContribution]);
 
     await client.query('COMMIT');
+
+    await logAudit(req, 'GENERATE_CONTRIBUTION', `احتساب اشتراك شهر ${billing_month} للمنشأة ${company_id} بإجمالي ${totalContribution}`);
+
     res.status(201).json({ message: 'تم احتساب الاشتراكات وتوليد القيد المحاسبي بنجاح', contribution: bill });
   } catch (err) {
     await client.query('ROLLBACK');
@@ -278,6 +303,9 @@ app.post('/api/contributions/:id/pay', authenticateToken, requireRoles('ADMIN', 
     await client.query(`INSERT INTO journal_entry_lines (journal_entry_id, account_code, debit, credit) VALUES ($1, '1201', 0, $2)`, [jId, bill.total_contribution]);
 
     await client.query('COMMIT');
+
+    await logAudit(req, 'PAY_CONTRIBUTION', `سداد فاتورة اشتراك رقم ${billId} للمنشأة ${bill.company_id} بمبلغ ${bill.total_contribution}`);
+
     res.json({ message: 'تم سداد الفاتورة وتوليد قيد التحصيل المالي بنجاح' });
   } catch (err) {
     await client.query('ROLLBACK');
@@ -288,7 +316,7 @@ app.post('/api/contributions/:id/pay', authenticateToken, requireRoles('ADMIN', 
 });
 
 // ========================================================
-// 5. منح ومنافع التأمين مع تخزين العقد دائمياً
+// 5. منح ومنافع التأمين
 // ========================================================
 app.get('/api/marriage-grants', async (req, res) => {
   try {
@@ -320,16 +348,17 @@ app.post('/api/marriage-grant', upload.single('marriage_contract'), async (req, 
       return res.status(400).json({ error: 'قانونياً: منحة الزواج مخصصة للإناث فقط' });
     }
 
-    // تحويل وثيقة عقد الزواج إلى Base64 للحفظ الدائم
     const docBase64 = fileToBase64(req.file);
-
     const insertRes = await pool.query(
       `INSERT INTO compensation_grants (employee_id, grant_type, requested_amount, status, document_url, request_date)
        VALUES ($1, 'MARRIAGE_GRANT', $2, 'PENDING', $3, CURRENT_DATE) RETURNING *;`,
       [employee_id, requested_amount, docBase64]
     );
 
-    res.status(201).json({ message: 'تم تقديم الطلب وحفظ الوثيقة دائمياً', grant: insertRes.rows[0] });
+    const grant = insertRes.rows[0];
+    await logAudit(req, 'REQUEST_GRANT', `طلب منحة زواج للمؤمن عليها ${employee.full_name} بمبلغ ${requested_amount}`);
+
+    res.status(201).json({ message: 'تم تقديم الطلب وحفظ الوثيقة دائمياً', grant });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -362,6 +391,9 @@ app.post('/api/marriage-grant/:id/approve', authenticateToken, requireRoles('ADM
     await client.query(`INSERT INTO journal_entry_lines (journal_entry_id, account_code, debit, credit) VALUES ($1, '1101', 0, $2)`, [jId, grant.requested_amount]);
 
     await client.query('COMMIT');
+
+    await logAudit(req, 'APPROVE_GRANT', `اعتماد صرف منحة زواج للمؤمن عليها ${grant.full_name} بمبلغ ${grant.requested_amount}`);
+
     res.json({ message: 'تم اعتماد المنحة وتوليد القيد بنجاح' });
   } catch (err) {
     await client.query('ROLLBACK');
@@ -402,6 +434,18 @@ app.get('/api/journal-entries', async (req, res) => {
   }
 });
 
+// ========================================================
+// 7. استعراض سجل الرقابة الأمنية (Audit Logs)
+// ========================================================
+app.get('/api/audit-logs', authenticateToken, requireRoles('ADMIN'), async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM audit_logs ORDER BY id DESC LIMIT 100');
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.listen(PORT, () => {
-  console.log(`📡 الخادم يعمل بالتخزين الدائم المشفر ونظام RBAC: http://localhost:${PORT}`);
+  console.log(`📡 الخادم يعمل بكامل معايير الأمان وسجل الرقابة: http://localhost:${PORT}`);
 });
