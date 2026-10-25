@@ -9,27 +9,22 @@ const pool = require('./db');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// تفعيل برمجيات الوسيط (Middlewares)
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// إنشاء مجلد uploads تلقائياً في حال عدم وجوده
+// مجلد التخزين للمرفقات
 const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
-
-// جعل مجلد uploads متاحاً للوصول العام لعرض الصور
 app.use('/uploads', express.static(uploadDir));
 
-// إعداد التخزين باستخدام Multer
+// إعداد التخزين عبر Multer
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, uploadDir);
-  },
+  destination: (req, file, cb) => cb(null, uploadDir),
   filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    const unique = Date.now() + '-' + Math.round(Math.random() * 1e9);
     let ext = path.extname(file.originalname);
     if (!ext) {
       if (file.mimetype === 'image/jpeg') ext = '.jpg';
@@ -37,246 +32,310 @@ const storage = multer.diskStorage({
       else if (file.mimetype === 'application/pdf') ext = '.pdf';
       else ext = '.jpg';
     }
-    cb(null, file.fieldname + '-' + uniqueSuffix + ext);
+    cb(null, file.fieldname + '-' + unique + ext);
   }
 });
 
 const upload = multer({
   storage: storage,
-  limits: { fileSize: 10 * 1024 * 1024 }, // حد أقصى 10 ميجابايت للملف
+  limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    const allowedExts = /jpeg|jpg|png|pdf/;
-    const ext = path.extname(file.originalname).toLowerCase();
-    const isExtAllowed = allowedExts.test(ext);
-    const isMimeAllowed = /image\/(jpeg|jpg|png)|application\/pdf/.test(file.mimetype);
-
-    // قبول الملف إذا تطابق الامتداد أو نوع الميديا المرفق
-    if (isExtAllowed || isMimeAllowed || !ext) {
-      return cb(null, true);
+    const allowed = /jpeg|jpg|png|pdf/;
+    const ext = allowed.test(path.extname(file.originalname).toLowerCase());
+    const mime = allowed.test(file.mimetype);
+    if (ext || mime || !path.extname(file.originalname)) {
+      cb(null, true);
     } else {
-      cb(new Error('الملف يجب أن يكون صورة (JPEG, PNG) أو مستند PDF'));
+      cb(new Error('الملف يجب أن يكون صورة أو مستند PDF'));
     }
   }
 });
 
-// التأكد من وجود شركة افتراضية برقم 1 لمنع أخطاء المفاتيح الأجنبية
-async function ensureDefaultCompany() {
+// ========================================================
+// 1. إدارة جهات العمل والمنشآت (Companies)
+// ========================================================
+app.get('/api/companies', async (req, res) => {
   try {
-    await pool.query(`
-      INSERT INTO companies (id, name, commercial_register)
-      VALUES (1, 'الشركة الافتراضية للتأمينات', 'CR-1001')
-      ON CONFLICT (id) DO NOTHING;
-    `);
+    const result = await pool.query('SELECT * FROM companies ORDER BY id ASC');
+    res.json(result.rows);
   } catch (err) {
-    // تجاهل الخطأ في حال لم يكن جدول companies مستخدماً بنفس الحقول
+    res.status(500).json({ error: err.message });
   }
-}
-ensureDefaultCompany();
+});
 
-// ==========================================
-// 1. تسجيل مؤمن عليه جديد (مع إجبارية صورة البطاقة)
-// ==========================================
+app.post('/api/companies', async (req, res) => {
+  try {
+    const { company_name, commercial_register, tax_number, insurance_number, phone, address } = req.body;
+    const query = `
+      INSERT INTO companies (company_name, commercial_register, tax_number, insurance_number, phone, address)
+      VALUES ($1, $2, $3, $4, $5, $6) RETURNING *;
+    `;
+    const result = await pool.query(query, [company_name, commercial_register, tax_number, insurance_number, phone, address]);
+    res.status(201).json({ message: 'تم تسجيل جهة العمل بنجاح', company: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ========================================================
+// 2. إدارة المؤمن عليهم
+// ========================================================
+app.get('/api/employees', async (req, res) => {
+  try {
+    const query = `
+      SELECT e.*, c.company_name 
+      FROM employees e
+      LEFT JOIN companies c ON e.company_id = c.id
+      ORDER BY e.id DESC;
+    `;
+    const result = await pool.query(query);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/employees', upload.single('national_id_photo'), async (req, res) => {
   try {
     const { company_id, national_id, full_name, gender, basic_salary, hire_date } = req.body;
 
-    // التحقق من رفع صورة البطاقة
     if (!req.file) {
-      return res.status(400).json({ error: 'صورة البطاقة الشخصية وثيقة إجبارية لإتمام التسجيل' });
+      return res.status(400).json({ error: 'صورة الهوية الوطنية وثيقة إجبارية' });
     }
-
     if (!national_id || !full_name || !gender || !basic_salary) {
-      return res.status(400).json({ error: 'جميع البيانات الأساسية مطلوبة' });
+      return res.status(400).json({ error: 'جميع الحقول الأساسية مطلوبة' });
     }
 
-    const nationalIdPhotoUrl = `/uploads/${req.file.filename}`;
+    const insuranceNumber = 'SSN-' + Math.floor(100000 + Math.random() * 900000);
+    const photoUrl = `/uploads/${req.file.filename}`;
 
     const query = `
       INSERT INTO employees (
-        company_id, national_id, full_name, gender, basic_salary, hire_date, national_id_photo_url
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+        company_id, national_id, full_name, gender, basic_salary, hire_date, national_id_photo_url, insurance_number
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       RETURNING *;
     `;
 
-    const values = [
+    const result = await pool.query(query, [
       company_id || 1,
       national_id,
       full_name,
       gender.toUpperCase(),
       basic_salary,
       hire_date || new Date(),
-      nationalIdPhotoUrl
-    ];
+      photoUrl,
+      insuranceNumber
+    ]);
 
-    const result = await pool.query(query, values);
-
-    res.status(201).json({
-      message: '✅ تم تسجيل المؤمن عليه وحفظ صورة البطاقة بنجاح',
-      employee: result.rows[0]
-    });
-  } catch (error) {
-    console.error('خطأ في تسجيل الموظف:', error);
-    res.status(500).json({ error: 'فشل في حفظ بيانات الموظف', details: error.message });
+    res.status(201).json({ message: 'تم تسجيل المؤمن عليه بنجاح', employee: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
-// ==========================================
-// 2. تقديم طلب منحة الزواج (للإناث فقط + عقد الزواج)
-// ==========================================
-app.post('/api/marriage-grant', upload.single('marriage_contract'), async (req, res) => {
+// ========================================================
+// 3. محرك احتساب وتوليد اشتراكات التأمين الشهرية
+// ========================================================
+app.get('/api/contributions', async (req, res) => {
   try {
-    const { employee_id, requested_amount } = req.body;
-
-    if (!employee_id || !requested_amount) {
-      return res.status(400).json({ error: 'معرف الموظف ومبلغ المنحة مطلوبان' });
-    }
-
-    // التحقق من إرفاق وثيقة عقد الزواج
-    if (!req.file) {
-      return res.status(400).json({ error: 'إرفاق صورة عقد الزواج إجباري للتقديم على المنحة' });
-    }
-
-    // جلب بيانات الموظف والتحقق من الجنس
-    const empResult = await pool.query('SELECT * FROM employees WHERE id = $1', [employee_id]);
-    if (empResult.rows.length === 0) {
-      return res.status(404).json({ error: 'الموظف غير مسجل في النظام' });
-    }
-
-    const employee = empResult.rows[0];
-
-    // التحقق الصارم من قاعدة العمل: المنحة للإناث فقط
-    if (employee.gender !== 'FEMALE') {
-      return res.status(400).json({
-        error: 'مرفوض برمجياً: منحة الزواج مخصصة قانونياً للإناث المؤمن عليهن فقط'
-      });
-    }
-
-    const contractDocumentUrl = `/uploads/${req.file.filename}`;
-
-    const insertQuery = `
-      INSERT INTO compensation_grants (
-        employee_id, grant_type, requested_amount, status, document_url, request_date
-      ) VALUES ($1, 'MARRIAGE_GRANT', $2, 'PENDING', $3, CURRENT_DATE)
-      RETURNING *;
+    const query = `
+      SELECT mc.*, c.company_name, c.insurance_number AS company_ins_no
+      FROM monthly_contributions mc
+      JOIN companies c ON mc.company_id = c.id
+      ORDER BY mc.id DESC;
     `;
-
-    const grantResult = await pool.query(insertQuery, [employee_id, requested_amount, contractDocumentUrl]);
-
-    res.status(201).json({
-      message: '✅ تم تسجيل طلب منحة الزواج والتحقق من الأهلية بنجاح',
-      grant: grantResult.rows[0]
-    });
-  } catch (error) {
-    console.error('خطأ في تقديم منحة الزواج:', error);
-    res.status(500).json({ error: 'فشل في تقديم الطلب', details: error.message });
+    const result = await pool.query(query);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
-// ==========================================
-// 3. اعتماد طلب المنحة وتوليد القيد المحاسبي آلياً
-// ==========================================
-app.post('/api/marriage-grant/:id/approve', async (req, res) => {
-  const grantId = req.params.id;
+// توليد فاتورة اشتراك شهري مع القيد المحاسبي
+app.post('/api/contributions/generate', async (req, res) => {
+  const { company_id, billing_month } = req.body; // e.g., '2026-10'
   const client = await pool.connect();
 
   try {
-    await client.query('BEGIN'); // بدء المعاملة المالية
+    await client.query('BEGIN');
 
-    // جلب بيانات الطلب والتأكد من وجوده واستحقاقه
-    const grantResult = await client.query(
-      `SELECT cg.*, e.full_name, e.gender 
-       FROM compensation_grants cg 
-       JOIN employees e ON cg.employee_id = e.id 
-       WHERE cg.id = $1`,
-      [grantId]
+    // 1. حساب مجموع رواتب الموظفين في المنشأة
+    const salRes = await client.query(
+      `SELECT COALESCE(SUM(basic_salary), 0) AS total_salaries FROM employees WHERE company_id = $1`,
+      [company_id]
     );
 
-    if (grantResult.rows.length === 0) {
+    const totalSalaries = parseFloat(salRes.rows[0].total_salaries);
+    if (totalSalaries <= 0) {
       await client.query('ROLLBACK');
-      return res.status(404).json({ error: 'طلب المنحة غير موجود' });
+      return res.status(400).json({ error: 'لا يوجد موظفون برواتب مسجلين في هذه المنشأة' });
     }
 
-    const grant = grantResult.rows[0];
+    // النسب التأمينية المعتمدة: 6% حصة العامل، 9% حصة المنشأة = إجمالي 15%
+    const employeeShare = parseFloat((totalSalaries * 0.06).toFixed(2));
+    const employerShare = parseFloat((totalSalaries * 0.09).toFixed(2));
+    const totalContribution = parseFloat((employeeShare + employerShare).toFixed(2));
 
-    if (grant.gender !== 'FEMALE') {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'مخالفة للنظام: المنحة مخصصة للإناث فقط' });
-    }
+    // 2. إدراج الفاتورة الشهرية
+    const billInsert = `
+      INSERT INTO monthly_contributions (company_id, billing_month, total_salaries, employee_share, employer_share, total_contribution, status)
+      VALUES ($1, $2, $3, $4, $5, $6, 'UNPAID')
+      ON CONFLICT (company_id, billing_month) 
+      DO UPDATE SET total_salaries = EXCLUDED.total_salaries, employee_share = EXCLUDED.employee_share, employer_share = EXCLUDED.employer_share, total_contribution = EXCLUDED.total_contribution
+      RETURNING *;
+    `;
+    const billResult = await client.query(billInsert, [company_id, billing_month, totalSalaries, employeeShare, employerShare, totalContribution]);
+    const bill = billResult.rows[0];
 
-    // تحديث حالة الطلب إلى معتمد
-    await client.query(
-      `UPDATE compensation_grants SET status = 'APPROVED' WHERE id = $1`,
-      [grantId]
-    );
-
-    // إنشاء رأس قيد اليومية
-    const journalResult = await client.query(
+    // 3. توليد القيد المحاسبي لاستحقاق الاشتراكات
+    // من حـ/ مدينو الاشتراكات (1201) إلى حـ/ إيرادات الاشتراكات التأمينية (4101)
+    const journalRes = await client.query(
       `INSERT INTO journal_entries (entry_date, description, reference_type, reference_id)
-       VALUES (CURRENT_DATE, $1, 'MARRIAGE_GRANT', $2)
-       RETURNING id`,
-      [`صرف منحة زواج للموظفة: ${grant.full_name}`, grantId]
+       VALUES (CURRENT_DATE, $1, 'MONTHLY_CONTRIBUTION', $2) RETURNING id`,
+      [`استحقاق اشتراكات التأمين لشهر ${billing_month} - منشأة رقم ${company_id}`, bill.id]
     );
+    const jId = journalRes.rows[0].id;
 
-    const journalEntryId = journalResult.rows[0].id;
-    const grantAmount = grant.requested_amount;
+    // مدين: مدينو الاشتراكات
+    await client.query(`INSERT INTO journal_entry_lines (journal_entry_id, account_code, debit, credit) VALUES ($1, '1201', $2, 0)`, [jId, totalContribution]);
+    // دائن: إيرادات الاشتراكات
+    await client.query(`INSERT INTO journal_entry_lines (journal_entry_id, account_code, debit, credit) VALUES ($1, '4101', 0, $2)`, [jId, totalContribution]);
 
-    // الطرف المدين: حساب مصروفات منافع التأمين (رقم الحساب 5101)
-    await client.query(
-      `INSERT INTO journal_entry_lines (journal_entry_id, account_code, debit, credit)
-       VALUES ($1, '5101', $2, 0)`,
-      [journalEntryId, grantAmount]
-    );
-
-    // الطرف الدائن: حساب الصندوق أو البنك (رقم الحساب 1101)
-    await client.query(
-      `INSERT INTO journal_entry_lines (journal_entry_id, account_code, debit, credit)
-       VALUES ($1, '1101', 0, $2)`,
-      [journalEntryId, grantAmount]
-    );
-
-    await client.query('COMMIT'); // تأكيد حفظ القيد
-
-    res.status(200).json({
-      message: '✅ تم اعتماد المنحة وإنشاء القيد المحاسبي المزدوج بنجاح',
-      journal_entry_id: journalEntryId,
-      amount: grantAmount
-    });
+    await client.query('COMMIT');
+    res.status(201).json({ message: 'تم احتساب الاشتراكات وتوليد القيد المحاسبي بنجاح', contribution: bill });
   } catch (err) {
     await client.query('ROLLBACK');
-    console.error('خطأ أثناء اعتماد القيد المحاسبي:', err);
-    res.status(500).json({ error: 'فشل اعتماد القيد المحاسبي', details: err.message });
+    res.status(500).json({ error: err.message });
   } finally {
     client.release();
   }
 });
 
-// ==========================================
-// 4. استعراض قوائم البيانات (للمراجعة والعرض)
-// ==========================================
-app.get('/api/employees', async (req, res) => {
+// سداد الفاتورة الشهرية وتوليد قيد القبض
+app.post('/api/contributions/:id/pay', async (req, res) => {
+  const billId = req.params.id;
+  const client = await pool.connect();
   try {
-    const result = await pool.query('SELECT * FROM employees ORDER BY id DESC');
-    res.json(result.rows);
+    await client.query('BEGIN');
+    const billRes = await client.query('SELECT * FROM monthly_contributions WHERE id = $1', [billId]);
+    if (billRes.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'الفاتورة غير موجودة' });
+    }
+    const bill = billRes.rows[0];
+    if (bill.status === 'PAID') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'الفاتورة مسددة مسبقاً' });
+    }
+
+    await client.query("UPDATE monthly_contributions SET status = 'PAID' WHERE id = $1", [billId]);
+
+    // قيد التحصيل: من حـ/ البنك (1101) إلى حـ/ مدينو الاشتراكات (1201)
+    const jRes = await client.query(
+      `INSERT INTO journal_entries (entry_date, description, reference_type, reference_id)
+       VALUES (CURRENT_DATE, $1, 'CONTRIBUTION_PAYMENT', $2) RETURNING id`,
+      [`سداد اشتراكات شهر ${bill.billing_month} - منشأة رقم ${bill.company_id}`, billId]
+    );
+    const jId = jRes.rows[0].id;
+    await client.query(`INSERT INTO journal_entry_lines (journal_entry_id, account_code, debit, credit) VALUES ($1, '1101', $2, 0)`, [jId, bill.total_contribution]);
+    await client.query(`INSERT INTO journal_entry_lines (journal_entry_id, account_code, debit, credit) VALUES ($1, '1201', 0, $2)`, [jId, bill.total_contribution]);
+
+    await client.query('COMMIT');
+    res.json({ message: 'تم سداد الفاتورة وتوليد قيد التحصيل المالي بنجاح' });
   } catch (err) {
+    await client.query('ROLLBACK');
     res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 
+// ========================================================
+// 4. طلبات واعتماد المنح والمنافع
+// ========================================================
 app.get('/api/marriage-grants', async (req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT cg.*, e.full_name, e.gender 
-       FROM compensation_grants cg 
-       JOIN employees e ON cg.employee_id = e.id 
-       ORDER BY cg.id DESC`
-    );
+    const query = `
+      SELECT cg.*, e.full_name, e.gender, e.insurance_number 
+      FROM compensation_grants cg 
+      JOIN employees e ON cg.employee_id = e.id 
+      ORDER BY cg.id DESC;
+    `;
+    const result = await pool.query(query);
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// 5. استعراض دفتر اليومية العامة والقيود المحاسبية
+app.post('/api/marriage-grant', upload.single('marriage_contract'), async (req, res) => {
+  try {
+    const { employee_id, requested_amount } = req.body;
+    if (!employee_id || !requested_amount || !req.file) {
+      return res.status(400).json({ error: 'جميع البيانات والوثيقة الرسمية مطلوبة' });
+    }
+
+    const empRes = await pool.query('SELECT * FROM employees WHERE id = $1', [employee_id]);
+    if (empRes.rows.length === 0) return res.status(404).json({ error: 'المؤمن عليه غير مسجل' });
+
+    const employee = empRes.rows[0];
+    if (employee.gender !== 'FEMALE') {
+      return res.status(400).json({ error: 'قانونياً: منحة الزواج مخصصة للإناث فقط' });
+    }
+
+    const docUrl = `/uploads/${req.file.filename}`;
+    const insertRes = await pool.query(
+      `INSERT INTO compensation_grants (employee_id, grant_type, requested_amount, status, document_url, request_date)
+       VALUES ($1, 'MARRIAGE_GRANT', $2, 'PENDING', $3, CURRENT_DATE) RETURNING *;`,
+      [employee_id, requested_amount, docUrl]
+    );
+
+    res.status(201).json({ message: 'تم تقديم الطلب بنجاح', grant: insertRes.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/marriage-grant/:id/approve', async (req, res) => {
+  const grantId = req.params.id;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const grantRes = await client.query(
+      `SELECT cg.*, e.full_name FROM compensation_grants cg JOIN employees e ON cg.employee_id = e.id WHERE cg.id = $1`,
+      [grantId]
+    );
+    if (grantRes.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'الطلب غير موجود' });
+    }
+    const grant = grantRes.rows[0];
+
+    await client.query(`UPDATE compensation_grants SET status = 'APPROVED' WHERE id = $1`, [grantId]);
+
+    // قيد الصرف المحاسبي: من حـ/ مصروفات المنافع (5101) إلى حـ/ البنك (1101)
+    const jRes = await client.query(
+      `INSERT INTO journal_entries (entry_date, description, reference_type, reference_id)
+       VALUES (CURRENT_DATE, $1, 'MARRIAGE_GRANT', $2) RETURNING id`,
+      [`صرف منحة زواج للمؤمن عليها: ${grant.full_name}`, grantId]
+    );
+    const jId = jRes.rows[0].id;
+    await client.query(`INSERT INTO journal_entry_lines (journal_entry_id, account_code, debit, credit) VALUES ($1, '5101', $2, 0)`, [jId, grant.requested_amount]);
+    await client.query(`INSERT INTO journal_entry_lines (journal_entry_id, account_code, debit, credit) VALUES ($1, '1101', 0, $2)`, [jId, grant.requested_amount]);
+
+    await client.query('COMMIT');
+    res.json({ message: 'تم اعتماد المنحة وتوليد القيد بنجاح' });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// ========================================================
+// 5. استعراض دفتر اليومية العامة المحاسبي
+// ========================================================
 app.get('/api/journal-entries', async (req, res) => {
   try {
     const query = `
@@ -286,8 +345,10 @@ app.get('/api/journal-entries', async (req, res) => {
         je.description,
         jel.account_code,
         CASE 
-          WHEN jel.account_code = '5101' THEN 'حـ/ مصروفات منافع التأمين (منح الزواج)'
-          WHEN jel.account_code = '1101' THEN 'حـ/ الصندوق والبنك'
+          WHEN jel.account_code = '5101' THEN 'حـ/ مصروفات منافع التأمين'
+          WHEN jel.account_code = '1101' THEN 'حـ/ البنك والصندوق'
+          WHEN jel.account_code = '1201' THEN 'حـ/ مدينو الاشتراكات التأمينية'
+          WHEN jel.account_code = '4101' THEN 'حـ/ إيرادات الاشتراكات التأمينية'
           ELSE jel.account_code
         END AS account_name,
         jel.debit,
@@ -299,12 +360,10 @@ app.get('/api/journal-entries', async (req, res) => {
     const result = await pool.query(query);
     res.json(result.rows);
   } catch (err) {
-    console.error('خطأ في جلب القيود المحاسبية:', err);
-    res.status(500).json({ error: 'فشل في استرجاع القيود المحاسبية', details: err.message });
+    res.status(500).json({ error: err.message });
   }
 });
 
-// تشغيل الخادم
 app.listen(PORT, () => {
-  console.log(`📡 الخادم يعمل حالياً على المنفذ: http://localhost:${PORT}`);
+  console.log(`📡 الخادم يعمل بكامل الوحدات التأمينية: http://localhost:${PORT}`);
 });
