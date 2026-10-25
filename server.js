@@ -2,8 +2,6 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const pool = require('./db');
@@ -13,42 +11,26 @@ const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || 'insurance_secret_jwt_key_2026';
 
 app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// زيادة حد استيعاب النصوص لاستقبال صور الـ Base64 الكبيرة بأمان
+app.use(express.json({ limit: '25mb' }));
+app.use(express.urlencoded({ extended: true, limit: '25mb' }));
 
-// مجلد التخزين للمرفقات
-const uploadDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
-
-// ترويسات أمان الصور ومنع حظر المتصفح
-app.use('/uploads', (req, res, next) => {
-  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  next();
-}, express.static(uploadDir));
-
-// إعداد Multer لرفع الملفات
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadDir),
-  filename: (req, file, cb) => {
-    const unique = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    let ext = path.extname(file.originalname);
-    if (!ext) {
-      if (file.mimetype === 'image/jpeg') ext = '.jpg';
-      else if (file.mimetype === 'image/png') ext = '.png';
-      else if (file.mimetype === 'application/pdf') ext = '.pdf';
-      else ext = '.jpg';
-    }
-    cb(null, file.fieldname + '-' + unique + ext);
-  }
-});
-
+// ========================================================
+// إعداد Multer للاحتفاظ بالملف في الذاكرة المؤقتة (Memory Storage)
+// لتحويله مباشرة إلى Base64 وتخزينه في Neon دون الحاجة لمجلد محلي
+// ========================================================
+const storage = multer.memoryStorage();
 const upload = multer({
   storage: storage,
-  limits: { fileSize: 10 * 1024 * 1024 }
+  limits: { fileSize: 8 * 1024 * 1024 } // حد أقصى 8 ميجابايت للمستند
 });
+
+// دالة مساعدة لتحويل الملف إلى صيغة Data URL (Base64)
+function fileToBase64(file) {
+  if (!file || !file.buffer) return null;
+  const mimeType = file.mimetype || 'image/jpeg';
+  return `data:${mimeType};base64,${file.buffer.toString('base64')}`;
+}
 
 // ========================================================
 // برمجيات التحقق الوسيطة (Auth & RBAC Middlewares)
@@ -76,22 +58,23 @@ function requireRoles(...allowedRoles) {
 }
 
 // ========================================================
-// 1. تسجيل الدخول والمصادقة (Authentication المرن)
+// 1. تسجيل الدخول والمصادقة (Authentication)
 // ========================================================
 app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body;
   try {
-    const userRes = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
+    const userRes = await pool.query('SELECT * FROM users WHERE TRIM(username) = TRIM($1)', [username]);
     if (userRes.rows.length === 0) {
       return res.status(401).json({ error: 'اسم المستخدم أو كلمة المرور غير صحيحة' });
     }
 
     const user = userRes.rows[0];
+    const cleanInputPass = String(password).trim();
+    const cleanDbPass = String(user.password).trim();
 
-    // التحقق المرن: مطابقة مباشرة أو مقارنة التشفير عبر bcrypt
-    let isMatch = (user.password === password);
-    if (!isMatch && (user.password.startsWith('$2a$') || user.password.startsWith('$2b$'))) {
-      isMatch = await bcrypt.compare(password, user.password);
+    let isMatch = (cleanDbPass === cleanInputPass);
+    if (!isMatch && (cleanDbPass.startsWith('$2a$') || cleanDbPass.startsWith('$2b$'))) {
+      isMatch = await bcrypt.compare(cleanInputPass, cleanDbPass);
     }
 
     if (!isMatch) {
@@ -126,7 +109,6 @@ app.get('/api/companies', async (req, res) => {
   }
 });
 
-// محمي: فقط مسؤول التسجيل والمدير
 app.post('/api/companies', authenticateToken, requireRoles('ADMIN', 'REGISTRATION_OFFICER'), async (req, res) => {
   try {
     const { company_name, commercial_register, tax_number, insurance_number, phone, address } = req.body;
@@ -142,7 +124,7 @@ app.post('/api/companies', authenticateToken, requireRoles('ADMIN', 'REGISTRATIO
 });
 
 // ========================================================
-// 3. إدارة المؤمن عليهم (Employees)
+// 3. إدارة المؤمن عليهم (Employees) مع تخزين الصورة دائمياً
 // ========================================================
 app.get('/api/employees', async (req, res) => {
   try {
@@ -171,7 +153,8 @@ app.post('/api/employees', upload.single('national_id_photo'), async (req, res) 
     }
 
     const insuranceNumber = 'SSN-' + Math.floor(100000 + Math.random() * 900000);
-    const photoUrl = `/uploads/${req.file.filename}`;
+    // تحويل الملف إلى نص مشفر دائم يحفظ في Neon مباشرة
+    const photoBase64 = fileToBase64(req.file);
 
     const query = `
       INSERT INTO employees (
@@ -187,18 +170,18 @@ app.post('/api/employees', upload.single('national_id_photo'), async (req, res) 
       gender.toUpperCase(),
       basic_salary,
       hire_date || new Date(),
-      photoUrl,
+      photoBase64,
       insuranceNumber
     ]);
 
-    res.status(201).json({ message: 'تم تسجيل المؤمن عليه بنجاح', employee: result.rows[0] });
+    res.status(201).json({ message: 'تم تسجيل المؤمن عليه بنجاح وتخزين هويته دائمياً', employee: result.rows[0] });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
 // ========================================================
-// 4. محرك الاشتراكات الشهرية والتحصيل المحاسبي
+// 4. الاشتراكات والتحصيل المحاسبي
 // ========================================================
 app.get('/api/contributions', async (req, res) => {
   try {
@@ -215,7 +198,6 @@ app.get('/api/contributions', async (req, res) => {
   }
 });
 
-// محمي: احتساب الاستحقاق (المدقق والمدير فقط)
 app.post('/api/contributions/generate', authenticateToken, requireRoles('ADMIN', 'FINANCIAL_AUDITOR'), async (req, res) => {
   const { company_id, billing_month } = req.body;
   const client = await pool.connect();
@@ -268,7 +250,6 @@ app.post('/api/contributions/generate', authenticateToken, requireRoles('ADMIN',
   }
 });
 
-// محمي: سداد الفاتورة والتحصيل (المدقق والمدير فقط)
 app.post('/api/contributions/:id/pay', authenticateToken, requireRoles('ADMIN', 'FINANCIAL_AUDITOR'), async (req, res) => {
   const billId = req.params.id;
   const client = await pool.connect();
@@ -307,7 +288,7 @@ app.post('/api/contributions/:id/pay', authenticateToken, requireRoles('ADMIN', 
 });
 
 // ========================================================
-// 5. منح ومنافع التأمين (Compensation Grants)
+// 5. منح ومنافع التأمين مع تخزين العقد دائمياً
 // ========================================================
 app.get('/api/marriage-grants', async (req, res) => {
   try {
@@ -339,20 +320,21 @@ app.post('/api/marriage-grant', upload.single('marriage_contract'), async (req, 
       return res.status(400).json({ error: 'قانونياً: منحة الزواج مخصصة للإناث فقط' });
     }
 
-    const docUrl = `/uploads/${req.file.filename}`;
+    // تحويل وثيقة عقد الزواج إلى Base64 للحفظ الدائم
+    const docBase64 = fileToBase64(req.file);
+
     const insertRes = await pool.query(
       `INSERT INTO compensation_grants (employee_id, grant_type, requested_amount, status, document_url, request_date)
        VALUES ($1, 'MARRIAGE_GRANT', $2, 'PENDING', $3, CURRENT_DATE) RETURNING *;`,
-      [employee_id, requested_amount, docUrl]
+      [employee_id, requested_amount, docBase64]
     );
 
-    res.status(201).json({ message: 'تم تقديم الطلب بنجاح', grant: insertRes.rows[0] });
+    res.status(201).json({ message: 'تم تقديم الطلب وحفظ الوثيقة دائمياً', grant: insertRes.rows[0] });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// محمي: اعتماد صرف المنحة (المدقق والمدير فقط)
 app.post('/api/marriage-grant/:id/approve', authenticateToken, requireRoles('ADMIN', 'FINANCIAL_AUDITOR'), async (req, res) => {
   const grantId = req.params.id;
   const client = await pool.connect();
@@ -421,5 +403,5 @@ app.get('/api/journal-entries', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`📡 الخادم مؤمن بالكامل ويعمل بنظام RBAC و JWT: http://localhost:${PORT}`);
+  console.log(`📡 الخادم يعمل بالتخزين الدائم المشفر ونظام RBAC: http://localhost:${PORT}`);
 });
