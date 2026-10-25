@@ -120,6 +120,7 @@
         .badge-success { background-color: #dcfce7; color: #15803d; }
         .badge-warning { background-color: #fef3c7; color: #b45309; }
         .badge-danger { background-color: #fee2e2; color: #b91c1c; }
+        .badge-info { background-color: #e0f2fe; color: #0369a1; }
 
         .form-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin-bottom: 16px; }
         .form-group { display: flex; flex-direction: column; gap: 6px; }
@@ -174,6 +175,7 @@
             <li class="nav-item" onclick="switchTab('employees')"><span>👥</span><span>سجل المؤمن عليهم</span></li>
             <li class="nav-item" onclick="switchTab('grants')"><span>🎁</span><span>المنافع والمنح</span></li>
             <li class="nav-item" onclick="switchTab('journal')"><span>📑</span><span>دفتر اليومية العامة</span></li>
+            <li class="nav-item" id="nav-audit" style="display:none;" onclick="switchTab('audit')"><span>🛡️</span><span>سجل الرقابة والتدقيق</span></li>
         </ul>
         <div class="sidebar-footer">
             <span class="status-dot"></span>
@@ -201,7 +203,7 @@
             <div id="view-home" class="tab-view active">
                 <div class="welcome-hero">
                     <h2>منظومة إدارة التأمينات الاجتماعية والرقابة المالية الآلية</h2>
-                    <p>إدارة مركزية تربط جهات العمل بالمؤمن عليهم واحتساب الاشتراكات الشهرية القانونية، مع الصرف الآلي للمنافع وتوليد القيود المحاسبية التلقائية بدون تدخل بشري.</p>
+                    <p>إدارة مركزية تربط جهات العمل بالمؤمن عليهم واحتساب الاشتراكات الشهرية القانونية، مع الصرف الآلي للمنافع وتوليد القيود المحاسبية التلقائية وتوثيق العمليات رقابياً بدون تدخل بشري.</p>
                 </div>
                 <div class="kpi-grid">
                     <div class="kpi-card"><span class="kpi-title">المنشآت المسجلة</span><span class="kpi-value" id="kpi-companies">0</span></div>
@@ -307,6 +309,31 @@
                 </div>
             </div>
 
+            <!-- 7. سجل الرقابة والتدقيق -->
+            <div id="view-audit" class="tab-view">
+                <div class="section-card">
+                    <div class="section-header">
+                        <h2>🛡️ سجل التدقيق والرقابة الأمنية (Audit Trail)</h2>
+                        <button class="btn btn-outline btn-sm" onclick="fetchAuditLogs()">🔄 تحديث السجل</button>
+                    </div>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>المستخدم</th>
+                                <th>نوع الإجراء</th>
+                                <th>التفاصيل والملاحظات</th>
+                                <th>عنوان IP</th>
+                                <th>التاريخ والتوقيت</th>
+                            </tr>
+                        </thead>
+                        <tbody id="audit-table-body">
+                            <tr><td colspan="6" style="text-align:center;">جاري تحميل سجل العمليات...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
         </div>
     </div>
 
@@ -338,6 +365,13 @@
                 overlay.style.display = 'none';
                 document.getElementById('user-display-name').innerText = user.full_name;
                 document.getElementById('user-display-role').innerText = user.role;
+
+                // إظهار تبويب سجل الرقابة للمدير فقط
+                const auditTab = document.getElementById('nav-audit');
+                if (auditTab) {
+                    auditTab.style.display = (user.role === 'ADMIN') ? 'flex' : 'none';
+                }
+
                 fetchDashboardData();
             }
         }
@@ -395,13 +429,27 @@
                 contributions: 'اشتراكات التأمين الشهرية والتحصيل',
                 employees: 'سجل المؤمن عليهم والرواتب',
                 grants: 'إدارة طلبات منح الزواج والمنافع',
-                journal: 'دفتر اليومية العامة والقيود المحاسبية'
+                journal: 'دفتر اليومية العامة والقيود المحاسبية',
+                audit: 'سجل الرقابة والتدقيق الأمني'
             };
             document.getElementById('page-title').innerText = titles[tab] || 'لوحة التحكم';
 
-            const idx = { home:0, companies:1, contributions:2, employees:3, grants:4, journal:5 };
-            if (document.querySelectorAll('.nav-item')[idx[tab]]) {
-                document.querySelectorAll('.nav-item')[idx[tab]].classList.add('active');
+            const idxMap = {
+                home: 0,
+                companies: 1,
+                contributions: 2,
+                employees: 3,
+                grants: 4,
+                journal: 5,
+                audit: 6
+            };
+            const navItems = document.querySelectorAll('.nav-list .nav-item');
+            if (navItems[idxMap[tab]]) {
+                navItems[idxMap[tab]].classList.add('active');
+            }
+
+            if (tab === 'audit') {
+                fetchAuditLogs();
             }
         }
 
@@ -479,7 +527,7 @@
                     <td>${e.national_id}</td>
                     <td>${parseFloat(e.basic_salary).toLocaleString()} ريال</td>
                     <td>${e.gender === 'FEMALE' ? 'أنثى' : 'ذكر'}</td>
-                    <td>${e.national_id_photo_url ? `<button class="btn btn-outline btn-sm" onclick="previewImage('${BASE_URL}${e.national_id_photo_url}', 'بطاقة: ${e.full_name}')">🪪 عرض</button>` : '-'}</td>
+                    <td>${e.national_id_photo_url ? `<button class="btn btn-outline btn-sm" onclick="previewImage('${e.national_id_photo_url}', 'بطاقة: ${e.full_name}')">🪪 عرض</button>` : '-'}</td>
                 </tr>
             `).join('');
         }
@@ -527,7 +575,7 @@
                         <td>#${g.id}</td>
                         <td><strong>${g.full_name}</strong></td>
                         <td>${parseFloat(g.requested_amount).toLocaleString()} ريال</td>
-                        <td>${g.document_url ? `<button class="btn btn-outline btn-sm" onclick="previewImage('${BASE_URL}${g.document_url}', 'عقد زواج #${g.id}')">📄 عرض</button>` : '-'}</td>
+                        <td>${g.document_url ? `<button class="btn btn-outline btn-sm" onclick="previewImage('${g.document_url}', 'عقد زواج #${g.id}')">📄 عرض</button>` : '-'}</td>
                         <td><span class="badge ${g.status === 'APPROVED' ? 'badge-success' : 'badge-warning'}">${g.status === 'APPROVED' ? 'معتمد ومصروف' : 'قيد المراجعة'}</span></td>
                         <td>${g.request_date ? g.request_date.substring(0, 10) : '-'}</td>
                     </tr>
@@ -561,6 +609,61 @@
             }
         }
 
+        // ========================================================
+        // استعراض سجل الرقابة والتدقيق الأمني
+        // ========================================================
+             async function fetchAuditLogs() {
+            const tbody = document.getElementById('audit-table-body');
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;">جاري جلب سجل العمليات...</td></tr>';
+
+            try {
+                const res = await fetch(`${BASE_URL}/api/audit-logs`, {
+                    headers: authHeaders()
+                });
+
+                const text = await res.text();
+                let data;
+                try {
+                    data = JSON.parse(text);
+                } catch (e) {
+                    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--danger);">رد السيرفر: ${text}</td></tr>`;
+                    return;
+                }
+
+                if (!res.ok) {
+                    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--danger);">${data.error || 'غير مصرح للوصول للسجل'}</td></tr>`;
+                    return;
+                }
+
+                if (!Array.isArray(data) || data.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;">لا توجد عمليات موثقة في السجل حتى الآن</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = data.map(l => {
+                    let badgeClass = 'badge-info';
+                    const act = l.action || '';
+                    if (act.includes('FAIL')) badgeClass = 'badge-danger';
+                    else if (act.includes('PAY') || act.includes('APPROVE') || act.includes('SUCCESS')) badgeClass = 'badge-success';
+                    else if (act.includes('GENERATE') || act.includes('CREATE') || act.includes('REGISTER')) badgeClass = 'badge-warning';
+
+                    return `
+                        <tr>
+                            <td>#${l.id}</td>
+                            <td><strong>${l.username || 'نظام'}</strong></td>
+                            <td><span class="badge ${badgeClass}">${act}</span></td>
+                            <td>${l.details || '-'}</td>
+                            <td><code style="background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;">${l.ip_address || '-'}</code></td>
+                            <td style="font-size:13px;color:var(--text-muted);">${l.created_at ? new Date(l.created_at).toLocaleString('ar-EG') : '-'}</td>
+                        </tr>
+                    `;
+                }).join('');
+            } catch (err) {
+                tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--danger);">خطأ في الاتصال: ${err.message}</td></tr>`;
+            }
+        }
+
+
         async function handleCreateCompany(e) {
             e.preventDefault();
             const data = {
@@ -580,7 +683,7 @@
                 });
                 const result = await res.json();
                 if (res.ok) {
-                    alert('✅ تم حفظ واعتماد المنشأة بنجاح');
+                    alert('✅ تم حفظ واعتماد المنشأة بنجاح وتوثيقها في السجل');
                     document.getElementById('companyForm').reset();
                     fetchDashboardData();
                 } else {
@@ -610,7 +713,7 @@
                 });
                 const result = await res.json();
                 if (res.ok) {
-                    alert(result.message);
+                    alert('✅ ' + result.message);
                     fetchDashboardData();
                 } else {
                     alert('تنبيه: ' + (result.error || 'فشل الاحتساب'));
@@ -628,8 +731,11 @@
                     headers: authHeaders()
                 });
                 if (res.ok) {
-                    alert('تم السداد وإنشاء قيد التحصيل بنجاح');
+                    alert('✅ تم السداد وإنشاء قيد التحصيل وتوثيق العملية بنجاح');
                     fetchDashboardData();
+                } else {
+                    const data = await res.json();
+                    alert('❌ فشل السداد: ' + (data.error || 'خطأ غير معروف'));
                 }
             } catch (err) {
                 alert('فشل إتمام السداد');
@@ -640,7 +746,13 @@
             document.getElementById('modalTitle').innerText = title;
             const img = document.getElementById('modalImg');
             img.onerror = function() { this.src = 'https://placehold.co/500x350?text=تعذر+عرض+المرفق'; };
-            img.src = url;
+
+            if (url.startsWith('data:') || url.startsWith('http')) {
+                img.src = url;
+            } else {
+                img.src = `${BASE_URL}${url}`;
+            }
+
             document.getElementById('imageModal').style.display = 'flex';
         }
 
